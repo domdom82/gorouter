@@ -2,10 +2,8 @@ package route
 
 import (
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/uber-go/zap"
@@ -13,12 +11,7 @@ import (
 	"code.cloudfoundry.org/gorouter/config"
 	"code.cloudfoundry.org/gorouter/logger"
 	"code.cloudfoundry.org/gorouter/proxy/fails"
-	"code.cloudfoundry.org/routing-api/models"
 )
-
-type Counter struct {
-	value int64
-}
 
 type PoolPutResult int
 
@@ -28,61 +21,12 @@ const (
 	ADDED
 )
 
-func NewCounter(initial int64) *Counter {
-	return &Counter{initial}
-}
-
-func (c *Counter) Increment() {
-	atomic.AddInt64(&c.value, 1)
-}
-func (c *Counter) Decrement() {
-	atomic.AddInt64(&c.value, -1)
-}
-func (c *Counter) Count() int64 {
-	return atomic.LoadInt64(&c.value)
-}
-
-type Stats struct {
-	NumberConnections *Counter
-}
-
-func NewStats() *Stats {
-	return &Stats{
-		NumberConnections: &Counter{},
-	}
-}
-
-type Endpoint struct {
-	sync.RWMutex
-	ApplicationId        string
-	addr                 string
-	Tags                 map[string]string
-	ServerCertDomainSAN  string
-	PrivateInstanceId    string
-	StaleThreshold       time.Duration
-	RouteServiceUrl      string
-	PrivateInstanceIndex string
-	ModificationTag      models.ModificationTag
-	Stats                *Stats
-	IsolationSegment     string
-	useTls               bool
-	UpdatedAt            time.Time
-}
-
 //go:generate counterfeiter -o fakes/fake_endpoint_iterator.go . EndpointIterator
 type EndpointIterator interface {
 	Next() *Endpoint
 	EndpointFailed(err error)
 	PreRequest(e *Endpoint)
 	PostRequest(e *Endpoint)
-}
-
-type endpointElem struct {
-	endpoint           *Endpoint
-	index              int
-	updated            time.Time
-	failedAt           *time.Time
-	maxConnsPerBackend int64
 }
 
 type Pool struct {
@@ -100,44 +44,6 @@ type Pool struct {
 
 	random *rand.Rand
 	logger logger.Logger
-}
-
-type EndpointOpts struct {
-	AppId                   string
-	Host                    string
-	Port                    uint16
-	ServerCertDomainSAN     string
-	PrivateInstanceId       string
-	PrivateInstanceIndex    string
-	Tags                    map[string]string
-	StaleThresholdInSeconds int
-	RouteServiceUrl         string
-	ModificationTag         models.ModificationTag
-	IsolationSegment        string
-	UseTLS                  bool
-	UpdatedAt               time.Time
-}
-
-func NewEndpoint(opts *EndpointOpts) *Endpoint {
-	return &Endpoint{
-		ApplicationId:        opts.AppId,
-		addr:                 fmt.Sprintf("%s:%d", opts.Host, opts.Port),
-		Tags:                 opts.Tags,
-		useTls:               opts.UseTLS,
-		ServerCertDomainSAN:  opts.ServerCertDomainSAN,
-		PrivateInstanceId:    opts.PrivateInstanceId,
-		PrivateInstanceIndex: opts.PrivateInstanceIndex,
-		StaleThreshold:       time.Duration(opts.StaleThresholdInSeconds) * time.Second,
-		RouteServiceUrl:      opts.RouteServiceUrl,
-		ModificationTag:      opts.ModificationTag,
-		Stats:                NewStats(),
-		IsolationSegment:     opts.IsolationSegment,
-		UpdatedAt:            opts.UpdatedAt,
-	}
-}
-
-func (e *Endpoint) IsTLS() bool {
-	return e.useTls
 }
 
 type PoolOpts struct {
@@ -393,61 +299,4 @@ func (p *Pool) MarshalJSON() ([]byte, error) {
 	p.lock.Unlock()
 
 	return json.Marshal(endpoints)
-}
-
-func (e *endpointElem) failed() {
-	t := time.Now()
-	e.failedAt = &t
-}
-
-func (e *endpointElem) isOverloaded() bool {
-	if e.maxConnsPerBackend == 0 {
-		return false
-	}
-
-	return e.endpoint.Stats.NumberConnections.value >= e.maxConnsPerBackend
-}
-
-func (e *Endpoint) MarshalJSON() ([]byte, error) {
-	var jsonObj struct {
-		Address             string            `json:"address"`
-		TLS                 bool              `json:"tls"`
-		TTL                 int               `json:"ttl"`
-		RouteServiceUrl     string            `json:"route_service_url,omitempty"`
-		Tags                map[string]string `json:"tags"`
-		IsolationSegment    string            `json:"isolation_segment,omitempty"`
-		PrivateInstanceId   string            `json:"private_instance_id,omitempty"`
-		ServerCertDomainSAN string            `json:"server_cert_domain_san,omitempty"`
-	}
-
-	jsonObj.Address = e.addr
-	jsonObj.TLS = e.IsTLS()
-	jsonObj.RouteServiceUrl = e.RouteServiceUrl
-	jsonObj.TTL = int(e.StaleThreshold.Seconds())
-	jsonObj.Tags = e.Tags
-	jsonObj.IsolationSegment = e.IsolationSegment
-	jsonObj.PrivateInstanceId = e.PrivateInstanceId
-	jsonObj.ServerCertDomainSAN = e.ServerCertDomainSAN
-	return json.Marshal(jsonObj)
-}
-
-func (e *Endpoint) CanonicalAddr() string {
-	return e.addr
-}
-
-func (rm *Endpoint) Component() string {
-	return rm.Tags["component"]
-}
-
-func (e *Endpoint) ToLogData() []zap.Field {
-	return []zap.Field{
-		zap.String("ApplicationId", e.ApplicationId),
-		zap.String("Addr", e.addr),
-		zap.Object("Tags", e.Tags),
-		zap.String("RouteServiceUrl", e.RouteServiceUrl),
-	}
-}
-
-func (e *Endpoint) modificationTagSameOrNewer(other *Endpoint) bool {
-	return e.ModificationTag == other.ModificationTag || e.ModificationTag.SucceededBy(&other.ModificationTag)
 }
