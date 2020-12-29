@@ -24,6 +24,7 @@ var RetriableClassifiers = ClassifierGroup{
 var FailableClassifiers = ClassifierGroup{
 	RetriableClassifiers,
 	ConnectionResetOnRead,
+	EOF,
 }
 
 var PrunableClassifiers = RetriableClassifiers

@@ -3,6 +3,7 @@ package fails
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"io"
 	"net"
 
 	"context"
@@ -29,6 +30,10 @@ var ContextCancelled = ClassifierFunc(func(err error) bool {
 var ConnectionResetOnRead = ClassifierFunc(func(err error) bool {
 	ne, ok := err.(*net.OpError)
 	return ok && ne.Op == "read" && ne.Err.Error() == "read: connection reset by peer"
+})
+
+var EOF = ClassifierFunc(func(err error) bool {
+	return err == io.EOF
 })
 
 var RemoteFailedCertCheck = ClassifierFunc(func(err error) bool {
